@@ -326,6 +326,18 @@ pub struct AppState {
     pub cost_tracker: Option<Arc<CostTracker>>,
     /// SSE broadcast channel for real-time events
     pub event_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
+    /// Active Zalo QR login sessions for polling
+    pub zalo_sessions: Arc<
+        Mutex<
+            HashMap<
+                String,
+                (
+                    crate::channels::zalo::client::auth::ZaloAuth,
+                    std::time::Instant,
+                ),
+            >,
+        >,
+    >,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -661,6 +673,9 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         hooks.fire_gateway_start(host, actual_port).await;
     }
 
+    // Zalo QR sessions
+    let zalo_sessions = Arc::new(Mutex::new(HashMap::new()));
+
     // Wrap observer with broadcast capability for SSE
     let broadcast_observer: Arc<dyn crate::observability::Observer> =
         Arc::new(sse::BroadcastObserver::new(
@@ -696,6 +711,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         max_tool_iterations,
         cost_tracker,
         event_tx,
+        zalo_sessions,
     };
 
     // Config PUT needs larger body limit (1MB)
@@ -757,7 +773,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/cost", get(api::handle_api_cost))
         .route("/api/cli-tools", get(api::handle_api_cli_tools))
         .route("/api/health", get(api::handle_api_health))
-        .route("/api/node-control", post(handle_node_control))
+        .route("/api/zalo/qr", post(api::handle_api_zalo_qr_get))
+        .route("/api/zalo/qr/poll", post(api::handle_api_zalo_qr_poll))
         // ── SSE event stream ──
         .route("/api/events", get(sse::handle_sse_events))
         // ── WebSocket agent chat ──

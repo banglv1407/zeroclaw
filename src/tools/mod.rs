@@ -60,15 +60,8 @@ pub mod schedule;
 pub mod schema;
 pub mod screenshot;
 pub mod shell;
-pub mod subagent_list;
-pub mod subagent_manage;
-pub mod subagent_registry;
-pub mod subagent_spawn;
 pub mod task_plan;
 pub mod traits;
-pub mod url_validation;
-pub mod wasm_module;
-pub mod wasm_tool;
 pub mod web_fetch;
 pub mod web_search_tool;
 
@@ -387,11 +380,11 @@ pub fn all_tools_with_runtime(
         tool_arcs.push(Arc::new(WebSearchTool::new(
             security.clone(),
             root_config.web_search.provider.clone(),
-            api_key,
-            root_config.web_search.api_url.clone(),
+            root_config.web_search.brave_api_key.clone(),
+            None,
             root_config.web_search.max_results,
             root_config.web_search.timeout_secs,
-            root_config.web_search.user_agent.clone(),
+            format!("zeroclaw/{}", env!("CARGO_PKG_VERSION")),
         )));
     }
 

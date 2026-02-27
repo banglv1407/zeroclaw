@@ -12,11 +12,75 @@
 //! The default ZeroClaw binary excludes it to maintain the 4.6 MB size target.
 
 use super::traits::RuntimeAdapter;
-use crate::config::{WasmCapabilityEscalationMode, WasmModuleHashPolicy, WasmRuntimeConfig};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WasmModuleHashPolicy {
+    #[default]
+    Disabled,
+    Warn,
+    Enforce,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WasmCapabilityEscalationMode {
+    #[default]
+    Deny,
+    Clamp,
+}
+
+#[derive(Debug, Clone)]
+pub struct WasmSecurityConfig {
+    pub strict_host_validation: bool,
+    pub module_hash_policy: WasmModuleHashPolicy,
+    pub module_sha256: BTreeMap<String, String>,
+    pub capability_escalation_mode: WasmCapabilityEscalationMode,
+    pub require_workspace_relative_tools_dir: bool,
+    pub reject_symlink_tools_dir: bool,
+}
+
+impl Default for WasmSecurityConfig {
+    fn default() -> Self {
+        Self {
+            strict_host_validation: true,
+            module_hash_policy: WasmModuleHashPolicy::Disabled,
+            module_sha256: BTreeMap::new(),
+            capability_escalation_mode: WasmCapabilityEscalationMode::Deny,
+            require_workspace_relative_tools_dir: true,
+            reject_symlink_tools_dir: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WasmRuntimeConfig {
+    pub fuel_limit: u64,
+    pub memory_limit_mb: u64,
+    pub max_module_size_mb: u64,
+    pub tools_dir: String,
+    pub allow_workspace_read: bool,
+    pub allow_workspace_write: bool,
+    pub allowed_hosts: Vec<String>,
+    pub security: WasmSecurityConfig,
+}
+
+impl Default for WasmRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            fuel_limit: 1_000_000,
+            memory_limit_mb: 64,
+            max_module_size_mb: 50,
+            tools_dir: "tools/wasm".to_string(),
+            allow_workspace_read: false,
+            allow_workspace_write: false,
+            allowed_hosts: Vec::new(),
+            security: WasmSecurityConfig::default(),
+        }
+    }
+}
 
 /// WASM sandbox runtime — executes tool modules in an isolated interpreter.
 #[derive(Debug, Clone)]
@@ -277,7 +341,7 @@ impl WasmRuntime {
         for (module_name, digest) in &self.config.security.module_sha256 {
             Self::validate_module_name(module_name)?;
             normalized.insert(
-                module_name.clone(),
+                module_name.to_string(),
                 Self::normalize_sha256_pin(module_name, digest)?,
             );
         }

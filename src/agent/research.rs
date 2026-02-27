@@ -10,7 +10,6 @@
 //! - Prompt-guided tool calling (Gemini and other providers without native support)
 
 use crate::agent::dispatcher::{ToolDispatcher, XmlToolDispatcher};
-use crate::config::{ResearchPhaseConfig, ResearchTrigger};
 use crate::observability::Observer;
 use crate::providers::traits::build_tool_instructions_text;
 use crate::providers::{ChatMessage, ChatRequest, ChatResponse, Provider, ToolCall};
@@ -18,6 +17,42 @@ use crate::tools::{Tool, ToolResult, ToolSpec};
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Research phase trigger mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResearchTrigger {
+    Never,
+    Always,
+    Keywords,
+    Length,
+    Question,
+}
+
+/// Research phase runtime settings.
+#[derive(Debug, Clone)]
+pub struct ResearchPhaseConfig {
+    pub enabled: bool,
+    pub trigger: ResearchTrigger,
+    pub keywords: Vec<String>,
+    pub min_message_length: usize,
+    pub max_iterations: usize,
+    pub show_progress: bool,
+    pub system_prompt_prefix: String,
+}
+
+impl Default for ResearchPhaseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trigger: ResearchTrigger::Never,
+            keywords: Vec::new(),
+            min_message_length: 120,
+            max_iterations: 3,
+            show_progress: false,
+            system_prompt_prefix: String::new(),
+        }
+    }
+}
 
 /// Result of the research phase.
 #[derive(Debug, Clone)]

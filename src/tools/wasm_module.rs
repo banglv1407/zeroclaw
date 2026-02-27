@@ -218,8 +218,8 @@ impl Tool for WasmModuleTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WasmRuntimeConfig;
     use crate::runtime::NativeRuntime;
+    use crate::runtime::wasm::WasmRuntimeConfig;
     use crate::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security(workspace_dir: std::path::PathBuf) -> Arc<SecurityPolicy> {

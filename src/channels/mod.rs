@@ -41,6 +41,7 @@ pub mod whatsapp;
 pub mod whatsapp_storage;
 #[cfg(feature = "whatsapp-web")]
 pub mod whatsapp_web;
+pub mod zalo;
 
 pub use clawdtalk::ClawdTalkChannel;
 pub use cli::CliChannel;
@@ -66,6 +67,7 @@ pub use wati::WatiChannel;
 pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use whatsapp_web::WhatsAppWebChannel;
+pub use zalo::ZaloChannel;
 
 use crate::agent::loop_::{
     build_shell_policy_instructions, build_tool_instructions_from_specs,
@@ -4432,6 +4434,13 @@ fn collect_configured_channels(
                 sig.ignore_attachments,
                 sig.ignore_stories,
             )),
+        });
+    }
+
+    if let Some(ref zl) = config.channels_config.zalo {
+        channels.push(ConfiguredChannel {
+            display_name: "Zalo",
+            channel: Arc::new(ZaloChannel::new(zl.clone(), config.config_path.clone())),
         });
     }
 

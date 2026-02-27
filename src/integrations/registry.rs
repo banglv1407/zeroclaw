@@ -133,7 +133,13 @@ pub fn all_integrations() -> Vec<IntegrationEntry> {
             name: "Zalo",
             description: "Zalo Bot API",
             category: IntegrationCategory::Chat,
-            status_fn: |_| IntegrationStatus::ComingSoon,
+            status_fn: |c| {
+                if c.channels_config.zalo.is_some() {
+                    IntegrationStatus::Active
+                } else {
+                    IntegrationStatus::Available
+                }
+            },
         },
         IntegrationEntry {
             name: "DingTalk",

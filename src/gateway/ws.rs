@@ -10,10 +10,6 @@
 //! ```
 
 use super::AppState;
-use crate::agent::loop_::{
-    build_shell_policy_instructions, build_tool_instructions_from_specs, run_tool_call_loop,
-};
-use crate::approval::ApprovalManager;
 use crate::providers::ChatMessage;
 use axum::{
     extract::{
@@ -192,11 +188,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     // Add system message to history
     history.push(ChatMessage::system(&system_prompt));
 
-    let approval_manager = {
-        let config_guard = state.config.lock();
-        ApprovalManager::from_config(&config_guard.autonomy)
-    };
-
     while let Some(msg) = socket.recv().await {
         let msg = match msg {
             Ok(Message::Text(text)) => text,
@@ -260,11 +251,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             "model": state.model,
         }));
 
-        // Full agentic loop with tools (includes WASM skills, shell, memory, etc.)
-        match super::run_gateway_chat_with_tools(&state, &content).await {
+        let result = super::run_gateway_chat_with_tools(&state, &content).await;
+
+        match result {
             Ok(response) => {
-                let safe_response =
-                    finalize_ws_response(&response, &history, state.tools_registry_exec.as_ref());
+                let safe_response = finalize_ws_response(
+                    &response,
+                    &history,
+                    &Vec::<Box<dyn crate::tools::Tool>>::new(),
+                );
                 // Add assistant response to history
                 history.push(ChatMessage::assistant(&safe_response));
 

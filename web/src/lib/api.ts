@@ -9,6 +9,8 @@ import type {
   CostSummary,
   CliTool,
   HealthSnapshot,
+  ZaloQrResponse,
+  ZaloPollResponse,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
 
@@ -186,20 +188,29 @@ export function getIntegrations(): Promise<Integration[]> {
 }
 
 export function getIntegrationSettings(): Promise<IntegrationSettingsPayload> {
-  return apiFetch<IntegrationSettingsPayload>('/api/integrations/settings');
+  return apiFetch<
+    | IntegrationSettingsPayload
+    | { settings: IntegrationSettingsPayload }
+    | { integrations: IntegrationSettingsPayload }
+  >('/api/integrations/settings').then((data) => {
+    if ('revision' in (data as IntegrationSettingsPayload)) {
+      return data as IntegrationSettingsPayload;
+    }
+    if ('settings' in (data as { settings: IntegrationSettingsPayload })) {
+      return (data as { settings: IntegrationSettingsPayload }).settings;
+    }
+    return (data as { integrations: IntegrationSettingsPayload }).integrations;
+  });
 }
 
 export function putIntegrationCredentials(
   integrationId: string,
-  body: { revision?: string; fields: Record<string, string> },
-): Promise<{ status: string; revision: string; unchanged?: boolean }> {
-  return apiFetch<{ status: string; revision: string; unchanged?: boolean }>(
-    `/api/integrations/${encodeURIComponent(integrationId)}/credentials`,
-    {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    },
-  );
+  body: { revision: string; fields: Record<string, string> },
+): Promise<void> {
+  return apiFetch<void>(`/api/integrations/${encodeURIComponent(integrationId)}/credentials`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -265,4 +276,19 @@ export function getCliTools(): Promise<CliTool[]> {
   return apiFetch<CliTool[] | { cli_tools: CliTool[] }>('/api/cli-tools').then((data) =>
     unwrapField(data, 'cli_tools'),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Zalo QR Login
+// ---------------------------------------------------------------------------
+
+export function getZaloQr(): Promise<ZaloQrResponse> {
+  return apiFetch<ZaloQrResponse>('/api/zalo/qr', { method: 'POST' });
+}
+
+export function pollZaloQr(code: string): Promise<ZaloPollResponse> {
+  return apiFetch<ZaloPollResponse>('/api/zalo/qr/poll', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
 }

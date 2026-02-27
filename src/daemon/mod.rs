@@ -58,14 +58,13 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
 
     {
         if has_supervised_channels(&config) {
-            let channels_cfg = config.clone();
             handles.push(spawn_component_supervisor(
                 "channels",
                 initial_backoff,
                 max_backoff,
-                move || {
-                    let cfg = channels_cfg.clone();
-                    async move { crate::channels::start_channels(cfg).await }
+                move || async move {
+                    let cfg = crate::config::Config::load_or_init().await?;
+                    crate::channels::start_channels(cfg).await
                 },
             ));
         } else {

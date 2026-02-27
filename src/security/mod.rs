@@ -60,6 +60,7 @@ pub use policy::{AutonomyLevel, SecurityPolicy};
 pub use roles::{RoleRegistry, ToolAccess};
 #[allow(unused_imports)]
 pub use secrets::SecretStore;
+pub use syscall_anomaly::SyscallAnomalyDetector;
 #[allow(unused_imports)]
 pub use syscall_anomaly::{SyscallAnomalyAlert, SyscallAnomalyDetector, SyscallAnomalyKind};
 #[allow(unused_imports)]

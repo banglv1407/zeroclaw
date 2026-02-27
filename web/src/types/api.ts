@@ -131,3 +131,19 @@ export interface WsMessage {
   output?: string;
   message?: string;
 }
+
+export interface ZaloQrResponse {
+  ok: boolean;
+  code: string;
+  image: string;
+  error?: string;
+}
+
+export interface ZaloPollResponse {
+  ok: boolean;
+  status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'declined';
+  avatar?: string;
+  display_name?: string;
+  cookie?: string;
+  error?: string;
+}

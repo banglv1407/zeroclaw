@@ -33,7 +33,8 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
   const pageTitle = t(titleKey);
 
   const toggleLanguage = () => {
-    const currentIndex = localeCycle.indexOf(locale);
+    const currentLocale = localeCycle.includes(locale as Locale) ? (locale as Locale) : 'en';
+    const currentIndex = localeCycle.indexOf(currentLocale);
     const nextLocale = localeCycle[(currentIndex + 1) % localeCycle.length] ?? 'en';
     setAppLocale(nextLocale);
   };

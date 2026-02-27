@@ -7,6 +7,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use uuid::Uuid;
 
 /// GitHub repository for releases
 const GITHUB_REPO: &str = "zeroclaw-labs/zeroclaw";
@@ -298,15 +299,17 @@ pub async fn self_update(force: bool, check_only: bool) -> Result<()> {
     println!("Downloading: {}", asset.name);
 
     // Create temp directory
-    let temp_dir = tempfile::tempdir().context("Failed to create temp directory")?;
+    let temp_dir = env::temp_dir().join(format!("zeroclaw-update-{}", Uuid::new_v4()));
+    fs::create_dir_all(&temp_dir).context("Failed to create temp directory")?;
 
     // Download and extract
-    let new_binary = download_binary(asset, temp_dir.path()).await?;
+    let new_binary = download_binary(asset, &temp_dir).await?;
 
     println!("Installing update...");
 
     // Replace the binary
     replace_binary(&new_binary, &current_exe)?;
+    let _ = fs::remove_dir_all(&temp_dir);
 
     println!();
     println!("✅ Successfully updated to {}!", release.tag_name);

@@ -464,7 +464,6 @@ impl ModelRoutingConfigTool {
             hint: hint.clone(),
             provider: provider.clone(),
             model: model.clone(),
-            max_tokens: None,
             api_key: None,
         });
 

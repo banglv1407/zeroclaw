@@ -3482,6 +3482,8 @@ pub struct ChannelsConfig {
     pub nostr: Option<NostrConfig>,
     /// ClawdTalk voice channel configuration.
     pub clawdtalk: Option<crate::channels::clawdtalk::ClawdTalkConfig>,
+    /// Zalo channel configuration (Personal or Official Account).
+    pub zalo: Option<ZaloConfig>,
     /// Base timeout in seconds for processing a single channel message (LLM + tools).
     /// Runtime uses this as a per-turn budget that scales with tool-loop depth
     /// (up to 4x, capped) so one slow/retried model call does not consume the
@@ -3574,6 +3576,10 @@ impl ChannelsConfig {
                 Box::new(ConfigWrapper::new(self.clawdtalk.as_ref())),
                 self.clawdtalk.is_some(),
             ),
+            (
+                Box::new(ConfigWrapper::new(&self.zalo)),
+                self.zalo.is_some(),
+            ),
         ]
     }
 
@@ -3615,6 +3621,7 @@ impl Default for ChannelsConfig {
             qq: None,
             nostr: None,
             clawdtalk: None,
+            zalo: None,
             message_timeout_secs: default_channel_message_timeout_secs(),
         }
     }
@@ -4178,6 +4185,44 @@ impl ChannelConfig for IrcConfig {
 
 fn default_irc_port() -> u16 {
     6697
+}
+
+/// Zalo Personal configuration settings.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ZaloPersonalConfig {
+    /// Device IMEI string for Zalo web API.
+    #[serde(default)]
+    pub imei: String,
+    /// Path to the cookie file or literal JSON `{"cookie": "..."}` or raw cookie string.
+    #[serde(default)]
+    pub cookie_path: String,
+    /// HTTP User-Agent string.
+    #[serde(default)]
+    pub user_agent: String,
+}
+
+/// Zalo channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ZaloConfig {
+    /// Mode to operate the Zalo channel in: `"personal"` or `"official"`.
+    #[serde(default = "default_zalo_mode")]
+    pub mode: String,
+    /// Configuration specific to personal mode.
+    #[serde(default)]
+    pub personal: ZaloPersonalConfig,
+}
+
+fn default_zalo_mode() -> String {
+    "personal".to_string()
+}
+
+impl ChannelConfig for ZaloConfig {
+    fn name() -> &'static str {
+        "Zalo"
+    }
+    fn desc() -> &'static str {
+        "Zalo Personal or Official Account interface"
+    }
 }
 
 /// How ZeroClaw receives events from Feishu / Lark.
@@ -4903,6 +4948,122 @@ impl Default for AuditConfig {
             log_path: default_audit_log_path(),
             max_size_mb: default_audit_max_size_mb(),
             sign_events: false,
+        }
+    }
+}
+
+/// Syscall anomaly detector configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SyscallAnomalyConfig {
+    /// Enable syscall anomaly inspection.
+    #[serde(default = "default_syscall_anomaly_enabled")]
+    pub enabled: bool,
+    /// Baseline syscall names considered expected.
+    #[serde(default = "default_syscall_baseline")]
+    pub baseline_syscalls: Vec<String>,
+    /// Log path for emitted anomaly events (relative to ZeroClaw dir).
+    #[serde(default = "default_syscall_anomaly_log_path")]
+    pub log_path: String,
+    /// Emit unknown-syscall alerts when syscall is not in baseline.
+    #[serde(default = "default_true")]
+    pub alert_on_unknown_syscall: bool,
+    /// Emit denied-syscall alerts for blocked syscall events.
+    #[serde(default = "default_true")]
+    pub strict_mode: bool,
+    /// Threshold for denied events per rolling minute.
+    #[serde(default = "default_syscall_max_denied_events_per_minute")]
+    pub max_denied_events_per_minute: u32,
+    /// Threshold for total syscall-related events per rolling minute.
+    #[serde(default = "default_syscall_max_total_events_per_minute")]
+    pub max_total_events_per_minute: u32,
+    /// Maximum alerts emitted per rolling minute.
+    #[serde(default = "default_syscall_max_alerts_per_minute")]
+    pub max_alerts_per_minute: u32,
+    /// Cooldown (seconds) between repeated alerts of the same kind/syscall/command.
+    #[serde(default = "default_syscall_alert_cooldown_secs")]
+    pub alert_cooldown_secs: u64,
+}
+
+fn default_syscall_anomaly_enabled() -> bool {
+    true
+}
+
+fn default_syscall_baseline() -> Vec<String> {
+    vec![
+        "read".into(),
+        "write".into(),
+        "open".into(),
+        "close".into(),
+        "mmap".into(),
+        "mprotect".into(),
+        "munmap".into(),
+        "brk".into(),
+        "ioctl".into(),
+        "dup".into(),
+        "dup2".into(),
+        "getpid".into(),
+        "socket".into(),
+        "connect".into(),
+        "accept".into(),
+        "sendto".into(),
+        "recvfrom".into(),
+        "recvmsg".into(),
+        "listen".into(),
+        "getsockname".into(),
+        "getpeername".into(),
+        "setsockopt".into(),
+        "getsockopt".into(),
+        "clone".into(),
+        "fork".into(),
+        "execve".into(),
+        "exit".into(),
+        "wait4".into(),
+        "fcntl".into(),
+        "futex".into(),
+        "set_tid_address".into(),
+        "exit_group".into(),
+        "openat".into(),
+        "newfstatat".into(),
+        "set_robust_list".into(),
+        "epoll_create1".into(),
+        "getrandom".into(),
+        "statx".into(),
+        "clone3".into(),
+    ]
+}
+
+fn default_syscall_anomaly_log_path() -> String {
+    "logs/syscall-anomalies.log".to_string()
+}
+
+fn default_syscall_max_denied_events_per_minute() -> u32 {
+    20
+}
+
+fn default_syscall_max_total_events_per_minute() -> u32 {
+    200
+}
+
+fn default_syscall_max_alerts_per_minute() -> u32 {
+    20
+}
+
+fn default_syscall_alert_cooldown_secs() -> u64 {
+    30
+}
+
+impl Default for SyscallAnomalyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_syscall_anomaly_enabled(),
+            baseline_syscalls: default_syscall_baseline(),
+            log_path: default_syscall_anomaly_log_path(),
+            alert_on_unknown_syscall: true,
+            strict_mode: true,
+            max_denied_events_per_minute: default_syscall_max_denied_events_per_minute(),
+            max_total_events_per_minute: default_syscall_max_total_events_per_minute(),
+            max_alerts_per_minute: default_syscall_max_alerts_per_minute(),
+            alert_cooldown_secs: default_syscall_alert_cooldown_secs(),
         }
     }
 }

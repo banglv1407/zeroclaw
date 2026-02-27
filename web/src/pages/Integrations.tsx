@@ -1,17 +1,21 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Puzzle, Check, Zap, Clock, KeyRound, X } from 'lucide-react';
+import { Puzzle, Check, Zap, Clock, KeyRound, X, Loader2, QrCode, User as UserIcon } from 'lucide-react';
 import type {
   Integration,
   IntegrationCredentialsField,
   IntegrationSettingsEntry,
   StatusResponse,
+  ZaloQrResponse,
+  ZaloPollResponse,
 } from '@/types/api';
 import {
   getIntegrations,
   getIntegrationSettings,
   getStatus,
   putIntegrationCredentials,
+  getZaloQr,
+  pollZaloQr,
 } from '@/lib/api';
 
 function statusBadge(status: Integration['status']) {
@@ -84,6 +88,152 @@ function modelOptionsForField(
   return FALLBACK_MODEL_OPTIONS[integrationId] ?? [];
 }
 
+function ZaloLoginModal({ onClose }: { onClose: () => void }) {
+  const [qr, setQr] = useState<ZaloQrResponse | null>(null);
+  const [poll, setPoll] = useState<ZaloPollResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getZaloQr()
+      .then(setQr)
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!qr?.ok || !qr.code || poll?.status === 'confirmed') return;
+
+    const interval = setInterval(() => {
+      pollZaloQr(qr.code)
+        .then((res) => {
+          setPoll(res);
+          if (res.error) {
+            setError(res.error);
+            clearInterval(interval);
+            return;
+          }
+          if (res.status === 'confirmed') {
+            clearInterval(interval);
+            setTimeout(onClose, 2000);
+          }
+          if (res.status === 'expired' || res.status === 'declined') {
+            clearInterval(interval);
+          }
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err ?? 'Polling failed');
+          setError(message);
+          clearInterval(interval);
+        });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [qr, poll, onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div className="flex items-center justify-between p-4 border-b border-gray-800">
+          <div className="flex items-center gap-2 font-semibold text-white text-sm">
+            <QrCode className="h-4 w-4 text-blue-400" />
+            Zalo Login
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-800 rounded-lg text-gray-400 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-8 flex flex-col items-center text-center">
+          {loading ? (
+            <div className="h-48 flex flex-col items-center justify-center gap-3">
+              <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+              <p className="text-sm text-gray-400">Generating QR code...</p>
+            </div>
+          ) : error ? (
+            <div className="py-8 text-red-400 text-sm">{error}</div>
+          ) : poll?.status === 'confirmed' ? (
+            <div className="py-8 space-y-4">
+              <div className="mx-auto w-12 h-12 bg-green-900/40 rounded-full flex items-center justify-center">
+                <Check className="h-6 w-6 text-green-400" />
+              </div>
+              <div>
+                <h4 className="text-white font-medium">Login Successful</h4>
+                <p className="text-sm text-gray-400 mt-1">
+                  Cookies saved. Redirecting...
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="relative group mb-6">
+                <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-lg blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
+                <div className="relative bg-white p-2 rounded-lg shadow-inner">
+                  {qr?.image ? (
+                    <img
+                      src={qr.image}
+                      alt="Zalo QR"
+                      className="w-48 h-48 block"
+                    />
+                  ) : (
+                    <div className="w-48 h-48 bg-gray-100 flex items-center justify-center">
+                      <QrCode className="h-12 w-12 text-gray-300" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {poll?.status === 'scanned' ? (
+                <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex flex-col items-center gap-2">
+                    {poll.avatar ? (
+                      <img
+                        src={poll.avatar}
+                        className="w-12 h-12 rounded-full border-2 border-blue-500/50"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center">
+                        <UserIcon className="h-6 w-6 text-gray-400" />
+                      </div>
+                    )}
+                    <div className="text-sm font-medium text-white">
+                      {poll.display_name}
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-400 max-w-[240px]">
+                    Please confirm the login request on your phone.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-300 font-medium">
+                    Scan with Zalo App
+                  </p>
+                  <p className="text-xs text-gray-500 max-w-[200px]">
+                    Open Zalo on your phone and use the QR scanner to log in.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="px-4 py-3 bg-gray-900/50 border-t border-gray-800 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-white transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Integrations() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [settingsByName, setSettingsByName] = useState<
@@ -107,6 +257,7 @@ export default function Integrations() {
   const [quickModelDrafts, setQuickModelDrafts] = useState<Record<string, string>>({});
   const [quickModelSavingId, setQuickModelSavingId] = useState<string | null>(null);
   const [quickModelError, setQuickModelError] = useState<string | null>(null);
+  const [showZaloModal, setShowZaloModal] = useState(false);
 
   const buildInitialFieldValues = (integration: IntegrationSettingsEntry) =>
     integration.fields.reduce<Record<string, string>>((acc, field) => {
@@ -155,13 +306,30 @@ export default function Integrations() {
     }
     setError(null);
     try {
-      const [integrationList, settings, status] = await Promise.all([
+      const [integrationList, status] = await Promise.all([
         getIntegrations(),
-        getIntegrationSettings(),
         getStatus().catch(() => null),
       ]);
+      let settings: {
+        revision: string;
+        active_default_provider_integration_id?: string;
+        integrations: IntegrationSettingsEntry[];
+      } | null = null;
+      try {
+        settings = await getIntegrationSettings();
+      } catch (settingsErr: unknown) {
+        const message =
+          settingsErr instanceof Error ? settingsErr.message : String(settingsErr ?? '');
+        const isUnsupportedSettingsApi =
+          message.includes('API 404') ||
+          message.includes('API 405') ||
+          message.includes('API 501');
+        if (!isUnsupportedSettingsApi) {
+          throw settingsErr;
+        }
+      }
 
-      const nextSettingsByName = settings.integrations.reduce<
+      const nextSettingsByName = (settings?.integrations ?? []).reduce<
         Record<string, IntegrationSettingsEntry>
       >((acc, item) => {
         acc[item.name] = item;
@@ -169,9 +337,9 @@ export default function Integrations() {
       }, {});
 
       setIntegrations(integrationList);
-      setSettingsRevision(settings.revision);
+      setSettingsRevision(settings?.revision ?? '');
       setSettingsByName(nextSettingsByName);
-      setActiveAiIntegrationId(settings.active_default_provider_integration_id ?? null);
+      setActiveAiIntegrationId(settings?.active_default_provider_integration_id ?? null);
       setRuntimeStatus(status ? { model: status.model } : null);
       return nextSettingsByName;
     } catch (err: unknown) {
@@ -463,11 +631,10 @@ export default function Integrations() {
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors capitalize ${
-              activeCategory === cat
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors capitalize ${activeCategory === cat
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-900 text-gray-400 border border-gray-700 hover:bg-gray-800 hover:text-white'
-            }`}
+              }`}
           >
             {cat === 'all' ? 'All' : formatCategory(cat)}
           </button>
@@ -566,7 +733,6 @@ export default function Integrations() {
                           </span>
                         </div>
                       </div>
-
                       {editable && isAiIntegration && editable.configured && (
                         <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/50 p-3 space-y-2">
                           <div className="flex items-center justify-between gap-2">
@@ -643,6 +809,18 @@ export default function Integrations() {
                           >
                             <KeyRound className="h-3.5 w-3.5" />
                             {editable.configured ? 'Edit Keys' : 'Configure'}
+                          </button>
+                        </div>
+                      )}
+
+                      {integration.name === 'Zalo' && (
+                        <div className="mt-4 pt-4 border-t border-gray-800">
+                          <button
+                            onClick={() => setShowZaloModal(true)}
+                            className="w-full px-3 py-2 bg-blue-600/10 border border-blue-500/20 rounded-lg text-sm font-medium text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all flex items-center justify-center gap-2 group"
+                          >
+                            <QrCode className="h-4 w-4" />
+                            QR Login
                           </button>
                         </div>
                       )}
@@ -822,6 +1000,8 @@ export default function Integrations() {
           </div>
         </div>
       )}
+
+      {showZaloModal && <ZaloLoginModal onClose={() => setShowZaloModal(false)} />}
     </div>
   );
 }

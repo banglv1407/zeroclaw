@@ -3,12 +3,14 @@
 //! All `/api/*` routes require bearer token authentication (PairingGuard).
 
 use super::AppState;
+use crate::channels::zalo::client::auth::{QrLoginStatus, ZaloAuth, ZaloCredentials};
 use axum::{
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
+use std::time::Instant;
 
 const MASKED_SECRET: &str = "***MASKED***";
 
@@ -527,6 +529,189 @@ pub async fn handle_api_health(
 
     let snapshot = crate::health::snapshot();
     Json(serde_json::json!({"health": snapshot})).into_response()
+}
+
+/// POST /api/zalo/qr — generate a new Zalo QR code
+pub async fn handle_api_zalo_qr_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let config = state.config.lock().clone();
+    let (imei, user_agent) = if let Some(ref zalo) = config.channels_config.zalo {
+        let imei = if zalo.personal.imei.is_empty() {
+            let id: u64 = rand::random::<u64>() % 99_999_999_999_999; // 14 digits
+            format!("{:014}", id)
+        } else {
+            zalo.personal.imei.clone()
+        };
+        let ua = if zalo.personal.user_agent.is_empty() {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
+                .to_string()
+        } else {
+            zalo.personal.user_agent.clone()
+        };
+        (imei, ua)
+    } else {
+        let id: u64 = rand::random::<u64>() % 99_999_999_999_999;
+        (
+            format!("{:014}", id),
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
+                .to_string(),
+        )
+    };
+
+    let creds = ZaloCredentials {
+        imei,
+        cookie: None,
+        phone: None,
+        user_agent,
+    };
+
+    let mut auth = ZaloAuth::new(creds);
+    match auth.get_qr_code().await {
+        Ok(qr) => {
+            let mut sessions = state.zalo_sessions.lock();
+            sessions.insert(qr.code.clone(), (auth, Instant::now()));
+
+            // Prune old sessions (> 15 mins)
+            sessions.retain(|_, (_, time)| time.elapsed().as_secs() < 900);
+
+            Json(serde_json::json!({
+                "ok": true,
+                "code": qr.code,
+                "image": qr.image
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": format!("Zalo QR generation failed: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ZaloPollReq {
+    pub code: String,
+}
+
+/// POST /api/zalo/qr/poll — check status of a Zalo QR code
+pub async fn handle_api_zalo_qr_poll(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ZaloPollReq>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let auth_opt = {
+        let sessions = state.zalo_sessions.lock();
+        sessions.get(&req.code).map(|(auth, _)| auth.clone())
+    };
+
+    let auth = match auth_opt {
+        Some(a) => a,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "Session expired or invalid code"})),
+            )
+                .into_response();
+        }
+    };
+
+    match auth.poll_qr_status(&req.code).await {
+        Ok(status) => {
+            match status {
+                QrLoginStatus::Confirmed => {
+                    let cookies = auth.get_cookies();
+                    if !has_required_zalo_cookie(&cookies) {
+                        tracing::warn!(
+                            "Zalo QR confirmed but no usable cookie captured yet; waiting for next poll"
+                        );
+                        return Json(serde_json::json!({
+                            "ok": true,
+                            "status": "pending",
+                            "error": "QR confirmed but no usable Zalo cookie was captured yet. Please retry the login flow."
+                        }))
+                        .into_response();
+                    }
+
+                    // Automatically update config
+                    let config_to_save = {
+                        let mut config = state.config.lock();
+                        if let Some(ref mut zalo) = config.channels_config.zalo {
+                            zalo.personal.cookie_path = cookies.clone();
+                        } else {
+                            use crate::config::schema::{ZaloConfig, ZaloPersonalConfig};
+                            config.channels_config.zalo = Some(ZaloConfig {
+                                mode: "personal".to_string(),
+                                personal: ZaloPersonalConfig {
+                                    cookie_path: cookies.clone(),
+                                    ..Default::default()
+                                },
+                            });
+                        }
+                        config.clone()
+                    };
+
+                    if let Err(e) = config_to_save.save().await {
+                        tracing::error!("Failed to save Zalo cookies to config: {e}");
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "ok": false,
+                                "error": format!("Failed to persist Zalo cookie: {e}")
+                            })),
+                        )
+                            .into_response();
+                    }
+
+                    // Remove session
+                    state.zalo_sessions.lock().remove(&req.code);
+
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "status": "confirmed",
+                        "cookie": cookies
+                    }))
+                    .into_response()
+                }
+                QrLoginStatus::Scanned {
+                    avatar,
+                    display_name,
+                } => Json(serde_json::json!({
+                    "ok": true,
+                    "status": "scanned",
+                    "avatar": avatar,
+                    "display_name": display_name
+                }))
+                .into_response(),
+                QrLoginStatus::Pending { .. } => {
+                    Json(serde_json::json!({"ok": true, "status": "pending"})).into_response()
+                }
+                QrLoginStatus::Expired => {
+                    state.zalo_sessions.lock().remove(&req.code);
+                    Json(serde_json::json!({"ok": true, "status": "expired"})).into_response()
+                }
+                QrLoginStatus::Declined => {
+                    state.zalo_sessions.lock().remove(&req.code);
+                    Json(serde_json::json!({"ok": true, "status": "declined"})).into_response()
+                }
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "error": format!("Polling failed: {e}")})),
+        )
+            .into_response(),
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
